@@ -1,152 +1,66 @@
 # 🏦 Banking Demo - Kubernetes Graceful Shutdown
 
-Demo ứng dụng Spring Boot để minh họa sự khác biệt giữa **Graceful Shutdown** và **Immediate Shutdown** trong Kubernetes.
+Demo ứng dụng Spring Boot minh họa sự khác biệt giữa **Graceful Shutdown** và **Immediate Shutdown** trong Kubernetes.
 
 ## 📋 Mục Đích
 
-Chứng minh tầm quan trọng của Graceful Shutdown trong môi trường production:
 - ✅ **GOOD version**: Transaction hoàn thành ngay cả khi pod bị xóa
 - ❌ **BAD version**: Transaction bị hủy khi pod bị xóa, mất dữ liệu
 
 ## 🏗️ Kiến Trúc
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Frontend (HTML/JS)                       │
-│  - Form nộp tiền (10s processing)                          │
-│  - Hiển thị danh sách tài khoản                            │
-│  - Lịch sử giao dịch                                       │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Spring Boot Backend (Java 17)                  │
-│  - REST API                                                 │
-│  - Transaction processing (10s delay)                       │
-│  - Pessimistic locking                                      │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    MySQL 8.0 Database                       │
-│  - accounts table                                           │
-│  - transactions table                                       │
-└─────────────────────────────────────────────────────────────┘
+Frontend (HTML/JS) → Spring Boot API (10s transaction) → MySQL 8.0
 ```
 
-## 🔧 Tech Stack
-
-- **Backend**: Spring Boot 3.2.0, Java 17, Spring Data JPA
-- **Frontend**: HTML, JavaScript (Vanilla)
-- **Database**: MySQL 8.0
-- **Container**: Docker, Kubernetes
-- **Build**: Maven, Multi-stage Dockerfile
+**Tech Stack:** Spring Boot 3.2.0, Java 17, MySQL 8.0, Kubernetes
 
 ## 📁 Cấu Trúc Project
 
 ```
 k8s-graceful-shutdown-demo/
-├── app/                                 # Application source code
+├── app/                    # Spring Boot source code
 │   ├── src/main/java/com/example/banking/
-│   │   ├── BankingApplication.java
-│   │   ├── ShutdownListener.java
-│   │   ├── controller/
-│   │   │   ├── BankingController.java
-│   │   │   └── HomeController.java
-│   │   ├── service/
-│   │   │   └── BankingService.java
-│   │   ├── repository/
-│   │   │   ├── AccountRepository.java
-│   │   │   └── TransactionRepository.java
-│   │   ├── entity/
-│   │   │   ├── Account.java
-│   │   │   └── Transaction.java
-│   │   ├── dto/
-│   │   │   └── DepositRequest.java
-│   │   └── filter/
-│   │       └── ShutdownFilter.java
-│   ├── src/main/resources/
-│   │   ├── application.properties
-│   │   ├── application-bad.properties
-│   │   └── static/
-│   │       ├── index.html
-│   │       ├── index-blue.html
-│   │       └── index-green.html
-│   ├── Dockerfile
-│   └── pom.xml
-├── database/                            # Database setup
-│   ├── docker-compose.yml
-│   └── init.sql
-├── k8s/                                 # Kubernetes manifests
-│   ├── k8s-bad.yaml
-│   ├── k8s-good-blue.yaml
-│   └── k8s-good-green.yaml
-├── scripts/                             # Build & test scripts
-│   ├── build-and-push.sh
-│   ├── test-concurrent-users.sh
-│   ├── test-deposit-rolling.sh
-│   ├── test-rolling-update.sh
-│   ├── test-traffic-routing.sh
-│   └── locustfile.py
-├── DRAIN-CONTRACT-VERIFICATION.md
-├── SHUTDOWN-SCENARIOS.md
-└── README.md
+│   │   ├── controller/     # REST API endpoints
+│   │   ├── service/        # Business logic (10s transaction)
+│   │   ├── filter/         # ShutdownFilter (chặn request mới)
+│   │   └── ShutdownListener.java  # Graceful shutdown handler
+│   └── src/main/resources/
+│       ├── application.properties  # Graceful shutdown config
+│       └── application-bad.properties  # Immediate shutdown config
+├── k8s/                    # Kubernetes manifests
+│   ├── k8s-bad.yaml        # ❌ Immediate shutdown
+│   ├── k8s-good-blue.yaml  # ✅ Graceful shutdown (blue)
+│   └── k8s-good-green.yaml # ✅ Graceful shutdown (green)
+├── database/               # MySQL setup
+├── scripts/                # Test scripts
+└── API-ENDPOINTS.md        # API documentation
 ```
 
-## 🚀 Cài Đặt và Chạy
+## 🚀 Quick Start
 
 ### 1. Khởi động MySQL
-
 ```bash
 cd database
 docker-compose up -d
 ```
 
-Kiểm tra MySQL đã chạy:
-```bash
-docker ps | grep mysql
-```
-
-### 2. Build Docker Image
-
+### 2. Build & Deploy
 ```bash
 cd scripts
 ./build-and-push.sh green
-```
 
-### 3. Push Image (Optional)
-
-```bash
-docker push chucthien03/banking-demo:latest
-```
-
-### 4. Deploy lên Kubernetes
-
-```bash
-cd k8s
-
-# Deploy BAD version (immediate shutdown)
-kubectl apply -f k8s-bad.yaml
-
-# Deploy GOOD version (graceful shutdown)
+cd ../k8s
 kubectl apply -f k8s-good-green.yaml
 ```
 
-### 5. Kiểm tra Pods
-
-```bash
-kubectl get pods
-kubectl get svc
-```
-
-### 6. Truy cập ứng dụng
-
-- **BAD version**: http://localhost:30082
+### 3. Truy cập
 - **GOOD version**: http://localhost:30081
+- **BAD version**: http://localhost:30082
 
 ## 🔍 So Sánh Cấu Hình
 
-### ❌ BAD Configuration (Immediate Shutdown)
+### ❌ BAD Configuration
 
 **application-bad.properties:**
 ```properties
@@ -158,28 +72,17 @@ spring.lifecycle.timeout-per-shutdown-phase=0s
 ```yaml
 spec:
   replicas: 1
-  template:
-    spec:
-      containers:
-      - name: banking
-        env:
-        - name: SPRING_PROFILES_ACTIVE
-          value: "bad"
-        # ❌ KHÔNG có readinessProbe
-        # ❌ KHÔNG có livenessProbe
-        # ❌ KHÔNG có preStop hook
-        # ❌ KHÔNG có terminationGracePeriodSeconds
+  # ❌ Không có readinessProbe
+  # ❌ Không có livenessProbe
+  # ❌ Không có preStop hook
+  # ❌ Không có terminationGracePeriodSeconds
 ```
 
-**Hậu quả:**
-- Pod nhận SIGTERM → Dừng ngay lập tức
-- Transaction đang xử lý bị hủy
-- Dữ liệu bị mất
-- Trải nghiệm người dùng tệ
+**Hậu quả:** Transaction bị hủy, mất dữ liệu
 
 ---
 
-### ✅ GOOD Configuration (Graceful Shutdown)
+### ✅ GOOD Configuration
 
 **application.properties:**
 ```properties
@@ -193,359 +96,180 @@ spec:
   replicas: 2
   strategy:
     rollingUpdate:
-      maxUnavailable: 0  # ✅ Không cho phép downtime
+      maxUnavailable: 0
   template:
     spec:
-      terminationGracePeriodSeconds: 60  # ✅ Cho 60s để cleanup
+      terminationGracePeriodSeconds: 60
       containers:
       - name: banking
-        readinessProbe:  # ✅ Kiểm tra sẵn sàng nhận traffic
+        readinessProbe:
           httpGet:
             path: /actuator/health/readiness
             port: 8080
-          initialDelaySeconds: 10
-          periodSeconds: 5
-        livenessProbe:  # ✅ Kiểm tra pod còn sống
+        livenessProbe:
           httpGet:
             path: /actuator/health/liveness
             port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
         lifecycle:
-          preStop:  # ✅ Gọi /api/drain để ngăn nhận connection mới
+          preStop:
             httpGet:
               path: /api/drain
               port: 8080
 ```
 
-**Lợi ích:**
-- Pod nhận SIGTERM → Chờ hoàn thành transaction
-- Dữ liệu được bảo toàn
-- Zero downtime deployment
-- Trải nghiệm người dùng tốt
+**Lợi ích:** Transaction hoàn thành, zero downtime
 
-## 🔌 REST API Endpoints
+## 🔌 API Endpoints
 
-### GET /api/accounts
-Lấy danh sách tất cả tài khoản
+| Endpoint | Method | Mô tả |
+|----------|--------|-------|
+| `/api/accounts` | GET | Danh sách tài khoản |
+| `/api/transactions` | GET | Lịch sử giao dịch |
+| `/api/deposit` | POST | Nộp tiền (10s) |
+| `/api/drain` | GET | PreStop hook - ngăn traffic mới |
+| `/actuator/health/readiness` | GET | Readiness probe |
+| `/actuator/health/liveness` | GET | Liveness probe |
 
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "accountNumber": "ACC001",
-    "accountHolder": "Nguyen Van A",
-    "balance": 1000000,
-    "version": 0
-  }
-]
-```
+Chi tiết: [API-ENDPOINTS.md](API-ENDPOINTS.md)
 
-### GET /api/transactions
-Lấy lịch sử giao dịch (sắp xếp theo thời gian mới nhất)
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "accountNumber": "ACC001",
-    "type": "DEPOSIT",
-    "amount": 100000,
-    "status": "COMPLETED",
-    "createdAt": "2026-01-29T10:30:00"
-  }
-]
-```
-
-### POST /api/deposit
-Nộp tiền vào tài khoản (xử lý 10 giây)
-
-**Request:**
-```json
-{
-  "accountNumber": "ACC001",
-  "amount": 100000
-}
-```
-
-**Response (Success):**
-```json
-{
-  "id": 1,
-  "accountNumber": "ACC001",
-  "type": "DEPOSIT",
-  "amount": 100000,
-  "status": "COMPLETED",
-  "createdAt": "2026-01-29T10:30:00"
-}
-```
-
-**Response (Error):**
-```
-Account not found: ACC999
-```
-
-## 🧪 Kịch Bản Test
+## 🧪 Test Scenarios
 
 ### Test 1: BAD Version (Mất Dữ Liệu)
 
-**Mục tiêu:** Chứng minh immediate shutdown gây mất dữ liệu
+```bash
+# 1. Gửi request deposit
+curl -X POST http://localhost:30082/api/deposit \
+  -H "Content-Type: application/json" \
+  -d '{"accountNumber":"ACC001","amount":100000}' &
 
-**Các bước:**
+# 2. Ngay lập tức xóa pod
+kubectl delete pod -l app=banking-bad --force --grace-period=0
 
-1. Truy cập http://localhost:30082
-2. Chọn tài khoản (ví dụ: ACC001 - Nguyen Van A)
-3. Nhập số tiền: 100000
-4. Nhấn nút **"Nộp tiền (10s)"**
-5. **NGAY LẬP TỨC** mở terminal và xóa pod:
-   ```bash
-   kubectl delete pod -l app=banking-bad --force --grace-period=0
-   ```
-
-**Kết quả mong đợi:**
-
-```
-❌ Transaction bị HỦY
-❌ Tiền KHÔNG vào tài khoản
-❌ Transaction status = "PROCESSING" (không bao giờ "COMPLETED")
-❌ Balance không thay đổi
+# 3. Kiểm tra kết quả
+curl http://localhost:30082/api/transactions | jq '.[0]'
 ```
 
-**Log trong pod (trước khi bị kill):**
-```
-🔵 [START] Deposit transaction for account: ACC001, amount: 100000
-📝 [STEP 1] Transaction created with ID: 1, status: PROCESSING
-⏳ [STEP 2] Processing transaction... (sleeping 10 seconds)
-🛑 SIGTERM RECEIVED - Starting graceful shutdown...
-❌ [ERROR] Transaction interrupted
-```
+**Kết quả:** ❌ Transaction status = "PROCESSING" (bị hủy)
 
 ---
 
 ### Test 2: GOOD Version (Dữ Liệu An Toàn)
 
-**Mục tiêu:** Chứng minh graceful shutdown bảo vệ dữ liệu
+```bash
+# 1. Gửi request deposit
+curl -X POST http://localhost:30081/api/deposit \
+  -H "Content-Type: application/json" \
+  -d '{"accountNumber":"ACC001","amount":100000}' &
 
-**Các bước:**
+# 2. Ngay lập tức xóa pod
+kubectl delete pod -l app=banking-good
 
-1. Truy cập http://localhost:30081
-2. Chọn tài khoản (ví dụ: ACC002 - Tran Thi B)
-3. Nhập số tiền: 200000
-4. Nhấn nút **"Nộp tiền (10s)"**
-5. **NGAY LẬP TỨC** mở terminal và xóa pod:
-   ```bash
-   kubectl delete pod -l app=banking-good
-   ```
-
-**Kết quả mong đợi:**
-
-```
-✅ Transaction HOÀN THÀNH sau 10 giây
-✅ Tiền VÀO tài khoản
-✅ Transaction status = "COMPLETED"
-✅ Balance tăng đúng số tiền
-✅ Pod mới được tạo tự động (replicas=2)
+# 3. Chờ 10s và kiểm tra
+sleep 10
+curl http://localhost:30081/api/transactions | jq '.[0]'
 ```
 
-**Log trong pod:**
-```
-🔵 [START] Deposit transaction for account: ACC002, amount: 200000
-📝 [STEP 1] Transaction created with ID: 2, status: PROCESSING
-⏳ [STEP 2] Processing transaction... (sleeping 10 seconds)
-🛑 SIGTERM RECEIVED - Starting graceful shutdown...
-✅ [STEP 2] Processing completed
-🔒 [STEP 3] Acquiring lock on account: ACC002
-💰 [STEP 3] Balance updated: 2000000 -> 2200000
-✅ [STEP 4] Transaction completed with ID: 2
-🟢 [SUCCESS] Deposit transaction completed successfully
-🛑 PreDestroy called - Cleaning up resources...
-```
+**Kết quả:** ✅ Transaction status = "COMPLETED"
 
 ---
 
 ### Test 3: Rolling Update (Zero Downtime)
 
-**Mục tiêu:** Chứng minh rolling update không gây downtime
+```bash
+# Terminal 1: Gửi request liên tục
+./scripts/test-concurrent-users.sh http://localhost:30081 10 0.5
 
-**Các bước:**
-
-1. Mở 2 tab browser:
-   - Tab 1: http://localhost:30081
-   - Tab 2: Terminal để xem pods
-2. Trong Tab 1, liên tục gửi request nộp tiền (mỗi 5 giây)
-3. Trong Tab 2, trigger rolling update:
-   ```bash
-   kubectl rollout restart deployment banking-good
-   ```
-4. Quan sát:
-   ```bash
-   kubectl get pods -w
-   ```
-
-**Kết quả mong đợi:**
-
+# Terminal 2: Rolling update
+kubectl rollout restart deployment banking-good
+kubectl get pods -w
 ```
-✅ Tất cả request đều thành công
-✅ Không có request nào bị lỗi
-✅ Pod cũ chờ hoàn thành transaction trước khi terminate
-✅ Pod mới sẵn sàng trước khi pod cũ bị xóa (maxUnavailable=0)
-```
+
+**Kết quả:** ✅ 100% success, không có downtime
 
 ---
 
-### Test 4: Stress Test (Multiple Concurrent Requests)
+### Test 4: Verify Readiness State
 
-**Mục tiêu:** Test graceful shutdown với nhiều request đồng thời
+```bash
+# 1. Gửi request
+curl -X POST http://localhost:30081/api/deposit \
+  -H "Content-Type: application/json" \
+  -d '{"accountNumber":"ACC001","amount":100000}' &
 
-**Các bước:**
+# 2. Delete pod
+kubectl delete pod -l app=banking-good
 
-1. Mở 5 tab browser cùng lúc
-2. Tất cả tab truy cập http://localhost:30081
-3. Đồng thời nhấn "Nộp tiền" trên cả 5 tab
-4. Ngay lập tức xóa pod:
-   ```bash
-   kubectl delete pod -l app=banking-good
-   ```
-
-**Kết quả mong đợi:**
-
-```
-✅ Tất cả 5 transaction đều hoàn thành
-✅ Không có transaction nào bị mất
-✅ Balance được cập nhật chính xác
-✅ Pessimistic locking hoạt động đúng (không có race condition)
+# 3. Kiểm tra readiness (phải chuyển DOWN)
+POD_IP=$(kubectl get pod -l app=banking-good -o jsonpath='{.items[0].status.podIP}')
+curl http://$POD_IP:8080/actuator/health/readiness
 ```
 
-## 📊 Giải Thích Chi Tiết
+**Kết quả:** ✅ Readiness = DOWN, Service ngừng route traffic
 
-### 🔄 Luồng Graceful Shutdown
+## 🔄 Luồng Graceful Shutdown
 
 ```
-1. User gửi request → Transaction bắt đầu (status=PROCESSING)
-                      ↓
-2. Sleep 10s để mô phỏng xử lý chậm
-                      ↓
-3. kubectl delete pod → Kubernetes gửi SIGTERM
-                      ↓
-4. preStop hook: sleep 20s (cho Service ngừng route traffic)
-                      ↓
-5. Spring Boot nhận SIGTERM → Không nhận request mới
-                      ↓
-6. Spring Boot chờ transaction hiện tại hoàn thành (max 30s)
-                      ↓
-7. Transaction hoàn thành → Update balance → status=COMPLETED
-                      ↓
-8. PreDestroy cleanup → Pod terminate
+1. User gửi request → Transaction bắt đầu (10s)
+2. kubectl delete pod → Kubernetes gọi preStop hook
+3. preStop: GET /api/drain → ShutdownListener.setNotReady()
+4. Readiness probe fail → Service ngừng route traffic
+5. ShutdownFilter chặn request mới → return 503
+6. Transaction đang xử lý tiếp tục hoàn thành
+7. SIGTERM → Spring Boot graceful shutdown
+8. Transaction completed → Pod terminate
 ```
 
-### ⏱️ Timeline So Sánh
-
-**BAD Version:**
+**Timeline:**
 ```
-0s:  User nhấn "Nộp tiền"
-0s:  Transaction created (status=PROCESSING)
-2s:  kubectl delete pod --force
-2s:  ❌ Pod killed ngay lập tức
-2s:  ❌ Transaction bị hủy
-```
-
-**GOOD Version:**
-```
-0s:  User nhấn "Nộp tiền"
-0s:  Transaction created (status=PROCESSING)
+0s:  Transaction start
 2s:  kubectl delete pod
-2s:  SIGTERM received
-2s:  preStop: httpGet /api/drain
-2s:  ShutdownListener.setNotReady() -> ready = false
-2s:  Service ngừng route traffic đến pod này
-2s:  Spring Boot: Không nhận request mới
-2s:  Spring Boot: Chờ transaction hoàn thành
-10s: Transaction processing done
-10s: Update balance
-10s: Transaction status = COMPLETED
-10s: ✅ Dữ liệu an toàn
-22s: PreDestroy cleanup
-22s: Pod terminate
+2s:  /api/drain called → ready = false
+2s:  Service stops routing
+10s: Transaction completed ✅
+12s: Pod terminated
 ```
 
-### 🛡️ Các Cơ Chế Bảo Vệ
+## 🛡️ Các Cơ Chế Bảo Vệ
 
-1. **terminationGracePeriodSeconds: 60**
-   - Kubernetes chờ tối đa 60s trước khi SIGKILL
-   - Đủ thời gian cho transaction 10s + preStop 20s + cleanup
+1. **terminationGracePeriodSeconds: 60** - Chờ 60s trước SIGKILL
+2. **preStop: httpGet /api/drain** - Ngăn traffic mới ngay lập tức
+3. **server.shutdown=graceful** - Spring Boot chờ request hoàn thành
+4. **ShutdownFilter** - Chặn request mới khi draining (503)
+5. **readinessProbe** - K8s biết khi nào pod sẵn sàng
+6. **maxUnavailable: 0** - Zero downtime deployment
 
-2. **preStop: sleep 20**
-   - Cho Service kịp cập nhật endpoint
-   - Tránh request mới vào pod đang shutdown
+## 📊 Key Takeaways
 
-3. **server.shutdown=graceful**
-   - Spring Boot không nhận request mới
-   - Chờ request hiện tại hoàn thành
-
-4. **spring.lifecycle.timeout-per-shutdown-phase=30s**
-   - Chờ tối đa 30s cho mỗi phase shutdown
-   - Đủ cho transaction 10s
-
-5. **readinessProbe**
-   - Kubernetes biết khi nào pod sẵn sàng
-   - Không route traffic đến pod chưa ready
-
-6. **maxUnavailable: 0**
-   - Rolling update không cho phép downtime
-   - Pod mới ready trước khi pod cũ terminate
-
-## 🎯 Key Takeaways
-
-### ❌ Không Graceful Shutdown:
-- Transaction bị hủy giữa chừng
-- Dữ liệu không nhất quán
-- Trải nghiệm người dùng tệ
-- Khó debug và troubleshoot
-
-### ✅ Có Graceful Shutdown:
-- Transaction luôn hoàn thành
-- Dữ liệu nhất quán
-- Zero downtime deployment
-- Production-ready
+| | BAD | GOOD |
+|---|-----|------|
+| Transaction | ❌ Bị hủy | ✅ Hoàn thành |
+| Dữ liệu | ❌ Mất | ✅ An toàn |
+| Downtime | ❌ Có | ✅ Không |
+| Production | ❌ Không dùng | ✅ Khuyến nghị |
 
 ## 📝 Best Practices
 
-1. **Luôn enable graceful shutdown** trong production
-2. **Set timeout phù hợp** với longest transaction
-3. **Implement health checks** (readiness + liveness)
-4. **Use preStop hook** để deregister từ service discovery
-5. **Set terminationGracePeriodSeconds** > (longest transaction + preStop)
-6. **Test graceful shutdown** trước khi deploy production
-7. **Monitor shutdown logs** để phát hiện vấn đề sớm
-8. **Use pessimistic locking** cho critical transactions
+1. ✅ Luôn enable graceful shutdown trong production
+2. ✅ Set terminationGracePeriodSeconds > longest transaction time
+3. ✅ Implement readiness + liveness probes
+4. ✅ Use preStop hook để drain traffic
+5. ✅ Set maxUnavailable: 0 cho zero downtime
+6. ✅ Test graceful shutdown trước khi deploy
+7. ✅ Monitor shutdown logs
 
 ## 🐛 Troubleshooting
 
-### Pod bị killed trước khi transaction hoàn thành
-
-**Nguyên nhân:** `terminationGracePeriodSeconds` quá ngắn
-
-**Giải pháp:**
+**Pod bị killed trước khi transaction hoàn thành:**
 ```yaml
 terminationGracePeriodSeconds: 60  # Tăng lên
 ```
 
-### Transaction vẫn bị hủy dù có graceful shutdown
-
-**Nguyên nhân:** Spring Boot timeout quá ngắn
-
-**Giải pháp:**
+**Transaction vẫn bị hủy:**
 ```properties
 spring.lifecycle.timeout-per-shutdown-phase=30s  # Tăng lên
 ```
 
-### Request vẫn vào pod đang shutdown
-
-**Nguyên nhân:** Thiếu preStop hook
-
-**Giải pháp:**
+**Request vẫn vào pod đang shutdown:**
 ```yaml
 lifecycle:
   preStop:
@@ -554,235 +278,16 @@ lifecycle:
       port: 8080
 ```
 
-## 📚 Tài Liệu Tham Khảo
+## 📚 Tài Liệu Thêm
 
-- [Spring Boot Graceful Shutdown](https://docs.spring.io/spring-boot/docs/current/reference/html/web.html#web.graceful-shutdown)
-- [Kubernetes Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
-- [Kubernetes Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
+- [API-ENDPOINTS.md](API-ENDPOINTS.md) - Chi tiết API endpoints
+- [SHUTDOWN-SCENARIOS.md](SHUTDOWN-SCENARIOS.md) - Các kịch bản shutdown
+- [DRAIN-CONTRACT-VERIFICATION.md](DRAIN-CONTRACT-VERIFICATION.md) - Verification tests
 
 ## 📧 Contact
 
-Nếu có câu hỏi, vui lòng tạo issue hoặc liên hệ qua email.
+Nếu có câu hỏi, vui lòng tạo issue.
 
 ---
 
 **Happy Testing! 🚀**
-
-## 📡 Test Bằng API (curl/Postman)
-
-### Test 5: API Test - BAD Version
-
-**Bước 1:** Gửi request nộp tiền
-```bash
-curl -X POST http://localhost:30082/api/deposit \
-  -H "Content-Type: application/json" \
-  -d '{"accountNumber":"ACC001","amount":100000}' &
-```
-
-**Bước 2:** Ngay lập tức xóa pod (trong vòng 2 giây)
-```bash
-kubectl delete pod -l app=banking-bad --force --grace-period=0
-```
-
-**Bước 3:** Kiểm tra kết quả
-```bash
-# Kiểm tra balance (không thay đổi)
-curl http://localhost:30082/api/accounts | jq '.[] | select(.accountNumber=="ACC001")'
-
-# Kiểm tra transaction (status = PROCESSING)
-curl http://localhost:30082/api/transactions | jq '.[0]'
-```
-
-**Kết quả:**
-```json
-{
-  "id": 1,
-  "accountNumber": "ACC001",
-  "type": "DEPOSIT",
-  "amount": 100000,
-  "status": "PROCESSING",
-  "createdAt": "2026-01-29T10:30:00"
-}
-```
-
----
-
-### Test 6: API Test - GOOD Version
-
-**Bước 1:** Gửi request nộp tiền
-```bash
-curl -X POST http://localhost:30081/api/deposit \
-  -H "Content-Type: application/json" \
-  -d '{"accountNumber":"ACC002","amount":200000}' &
-```
-
-**Bước 2:** Ngay lập tức xóa pod
-```bash
-kubectl delete pod -l app=banking-good
-```
-
-**Bước 3:** Chờ 10 giây rồi kiểm tra
-```bash
-sleep 10
-
-# Kiểm tra balance (đã tăng)
-curl http://localhost:30081/api/accounts | jq '.[] | select(.accountNumber=="ACC002")'
-
-# Kiểm tra transaction (status = COMPLETED)
-curl http://localhost:30081/api/transactions | jq '.[0]'
-```
-
-**Kết quả:**
-```json
-{
-  "id": 2,
-  "accountNumber": "ACC002",
-  "type": "DEPOSIT",
-  "amount": 200000,
-  "status": "COMPLETED",
-  "createdAt": "2026-01-29T10:30:00"
-}
-```
-
----
-
-### Test 7: Advanced Automated Test Script
-
-**Script tự động test với logic tính toán success/fail:**
-
-File `test-graceful-shutdown.sh` đã được tạo sẵn trong project.
-
-**Tính năng:**
-- Test cả BAD và GOOD version
-- Gửi 20 concurrent requests
-- Tính toán số lượng: Completed, Processing, Failed
-- Tính Success Rate (%)
-- So sánh balance trước/sau
-- Tính tiền bị mất (nếu có)
-- Hiển thị kết quả với màu sắc
-- So sánh tổng quan 2 version
-
-**Chạy script:**
-```bash
-chmod +x test-graceful-shutdown.sh
-./test-graceful-shutdown.sh
-```
-
-**Output mẫu:**
-```
-╔════════════════════════════════════════════════════════════╗
-║     Graceful Shutdown Test - Multiple Transactions        ║
-╔════════════════════════════════════════════════════════════╗
-
-🔴 Testing BAD Version (Immediate Shutdown)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💰 Initial Balance: 1000000
-📤 Sending 20 concurrent requests...
-⏳ Waiting 2s before deleting pod...
-🛑 Deleting pod with --force...
-
-📊 BAD Version Results:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📤 Total Requests Sent:      20
-📝 Transactions Created:     20
-✅ Completed:                3
-⏳ Processing (stuck):       17
-❌ Failed:                   0
-📈 Success Rate:             15%
-
-💰 Initial Balance:          1000000
-💰 Final Balance:            1030000
-💰 Balance Change:           +30000 (Expected: +30000)
-💸 Lost Money:               170000
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🟢 Testing GOOD Version (Graceful Shutdown)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💰 Initial Balance: 1000000
-📤 Sending 20 concurrent requests...
-⏳ Waiting 2s before deleting pod...
-🛑 Deleting pod with graceful shutdown...
-⏳ Waiting for transactions to complete (15s)...
-
-📊 GOOD Version Results:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📤 Total Requests Sent:      20
-📝 Transactions Created:     20
-✅ Completed:                20
-⏳ Processing:               0
-❌ Failed:                   0
-📈 Success Rate:             100%
-
-💰 Initial Balance:          1000000
-💰 Final Balance:            1200000
-💰 Balance Change:           +200000 (Expected: +200000)
-✅ Perfect! All transactions completed successfully!
-
-╔════════════════════════════════════════════════════════════╗
-║                    Comparison Summary                      ║
-╚════════════════════════════════════════════════════════════╝
-
-❌ BAD Version:
-   - Immediate shutdown kills transactions
-   - Data loss occurs
-   - Transactions stuck in PROCESSING state
-   - Poor user experience
-
-✅ GOOD Version:
-   - Graceful shutdown completes all transactions
-   - No data loss
-   - All transactions reach COMPLETED state
-   - Excellent user experience
-
-✅ Test completed!
-```
-
----
-
-### Test 8: Custom Test Parameters
-
-**Chỉnh sửa script để test với parameters khác:**
-
-```bash
-# Mở file test-graceful-shutdown.sh và sửa:
-TOTAL_REQUESTS=50        # Số lượng requests
-ACCOUNT="ACC002"         # Tài khoản test
-AMOUNT=5000              # Số tiền mỗi giao dịch
-DELAY_BEFORE_DELETE=3    # Delay trước khi xóa pod (giây)
-```
-
----
-
-### Test 9: Monitor Logs
-
-**Terminal 1:** Gửi request
-```bash
-curl -X POST http://localhost:30081/api/deposit \
-  -H "Content-Type: application/json" \
-  -d '{"accountNumber":"ACC001","amount":100000}' &
-```
-
-**Terminal 2:** Xem logs
-```bash
-kubectl logs -f -l app=banking-good
-```
-
-**Terminal 3:** Xóa pod
-```bash
-sleep 2 && kubectl delete pod -l app=banking-good
-```
-
-**Logs:**
-```
-🔵 [START] Deposit transaction for account: ACC001, amount: 100000
-📝 [STEP 1] Transaction created with ID: 1, status: PROCESSING
-⏳ [STEP 2] Processing transaction... (sleeping 10 seconds)
-🛑 SIGTERM RECEIVED - Starting graceful shutdown...
-✅ [STEP 2] Processing completed
-🔒 [STEP 3] Acquiring lock on account: ACC001
-💰 [STEP 3] Balance updated: 1000000 -> 1100000
-✅ [STEP 4] Transaction completed with ID: 1
-🟢 [SUCCESS] Deposit transaction completed successfully
-🛑 PreDestroy called - Cleaning up resources...
-```
