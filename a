@@ -1,0 +1,31 @@
+# ============================================
+# TEST GRACEFUL SHUTDOWN - READINESS STATE
+# ============================================
+
+# 1️⃣ Kiểm tra pod đang chạy
+kubectl get pods -l app=banking-good
+
+# 2️⃣ Kiểm tra readiness TRƯỚC khi delete (phải UP)
+kubectl exec -it $(kubectl get pod -l app=banking-good -o jsonpath='{.items[0].metadata.name}') -- curl -s localhost:8080/actuator/health/readiness | jq
+
+# 3️⃣ Terminal 1: Gửi request deposit (10s)
+curl -X POST http://banking-good/api/deposit \
+  -H "Content-Type: application/json" \
+  -d '{"accountNumber":"ACC001","amount":100000}' &
+
+# 4️⃣ Terminal 2: Sau 2s, delete pod
+sleep 2 && kubectl delete pod -l app=banking-good
+
+# 5️⃣ Terminal 3: Watch readiness state (phải chuyển DOWN ngay)
+kubectl exec -it $(kubectl get pod -l app=banking-good -o jsonpath='{.items[0].metadata.name}') -- sh -c 'while true; do curl -s localhost:8080/actuator/health/readiness | jq -r ".status"; sleep 1; done'
+
+# 6️⃣ Kiểm tra transaction hoàn thành
+curl http://banking-good/api/transactions | jq '.[0]'
+
+# ============================================
+# KẾT QUẢ MONG ĐỢI
+# ============================================
+# ✅ Readiness chuyển từ UP → DOWN ngay khi SIGTERM
+# ✅ Service ngừng route traffic
+# ✅ Transaction vẫn hoàn thành (status=COMPLETED)
+# ✅ Balance tăng đúng

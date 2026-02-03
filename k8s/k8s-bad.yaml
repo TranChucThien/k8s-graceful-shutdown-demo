@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banking-bad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banking-bad
+  template:
+    metadata:
+      labels:
+        app: banking-bad
+    spec:
+      containers:
+      - name: banking
+        image: chucthien03/banking-demo:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: "bad"
+        - name: DB_HOST
+          value: "172.28.174.197"
+        - name: DB_PORT
+          value: "3307"
+        - name: DB_NAME
+          value: "banking"
+        - name: DB_USER
+          value: "root"
+        - name: DB_PASSWORD
+          value: "password"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: banking-bad
+spec:
+  type: NodePort
+  selector:
+    app: banking-bad
+  ports:
+  - port: 8080
+    targetPort: 8080
+    nodePort: 30082

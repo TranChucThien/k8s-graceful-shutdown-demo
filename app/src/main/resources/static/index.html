@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Banking Demo - BLUE VERSION</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: white; text-align: center; margin-bottom: 30px; font-size: 2.5em; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .version-badge { background: #667eea; color: white; padding: 10px 20px; border-radius: 20px; display: inline-block; margin-bottom: 20px; font-weight: bold; }
+        .card { background: white; border-radius: 15px; padding: 25px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+        h2 { color: #667eea; margin-bottom: 20px; border-bottom: 3px solid #667eea; padding-bottom: 10px; }
+        .accounts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .account-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        .account-card h3 { margin-bottom: 10px; font-size: 1.2em; }
+        .account-card .balance { font-size: 2em; font-weight: bold; margin: 10px 0; }
+        .account-card .number { opacity: 0.9; font-size: 0.9em; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: 600; color: #333; }
+        select, input { width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 16px; transition: border-color 0.3s; }
+        select:focus, input:focus { outline: none; border-color: #667eea; }
+        button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; width: 100%; transition: transform 0.2s, box-shadow 0.2s; }
+        button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .status { padding: 15px; border-radius: 8px; margin-top: 15px; font-weight: 600; text-align: center; }
+        .status.processing { background: #fff3cd; color: #856404; border: 2px solid #ffc107; }
+        .status.success { background: #d4edda; color: #155724; border: 2px solid #28a745; }
+        .status.error { background: #f8d7da; color: #721c24; border: 2px solid #dc3545; }
+        .transactions-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        .transactions-table th { background: #667eea; color: white; padding: 12px; text-align: left; }
+        .transactions-table td { padding: 12px; border-bottom: 1px solid #ddd; }
+        .transactions-table tr:hover { background: #f5f5f5; }
+        .badge { padding: 5px 10px; border-radius: 5px; font-size: 0.85em; font-weight: 600; }
+        .badge.processing { background: #ffc107; color: #000; }
+        .badge.completed { background: #28a745; color: white; }
+        .badge.failed { background: #dc3545; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div style="text-align: center;">
+            <span class="version-badge">🔵 BLUE VERSION</span>
+        </div>
+        <h1>🏦 Banking Demo - K8s Rolling Update</h1>
+        
+        <div class="card">
+            <h2>💳 Danh sách tài khoản</h2>
+            <div id="accountsList" class="accounts-grid"></div>
+        </div>
+        
+        <div class="card">
+            <h2>💰 Nộp tiền (10 giây xử lý)</h2>
+            <form id="depositForm">
+                <div class="form-group">
+                    <label>Chọn tài khoản:</label>
+                    <select id="accountSelect" required>
+                        <option value="">-- Chọn tài khoản --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Số tiền:</label>
+                    <input type="number" id="amountInput" min="1000" step="1000" placeholder="Nhập số tiền" required>
+                </div>
+                <button type="submit" id="submitBtn">Nộp tiền (10s)</button>
+            </form>
+            <div id="status"></div>
+        </div>
+        
+        <div class="card">
+            <h2>📋 Lịch sử giao dịch</h2>
+            <table class="transactions-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Tài khoản</th>
+                        <th>Loại</th>
+                        <th>Số tiền</th>
+                        <th>Trạng thái</th>
+                        <th>Thời gian</th>
+                    </tr>
+                </thead>
+                <tbody id="transactionsList"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = window.location.origin;
+        let isProcessing = false;
+
+        function formatCurrency(amount) {
+            return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
+        }
+
+        function formatDateTime(dateTime) {
+            return new Date(dateTime).toLocaleString('vi-VN');
+        }
+
+        async function loadAccounts() {
+            try {
+                const response = await fetch(`${API_URL}/api/accounts`);
+                const accounts = await response.json();
+                
+                const accountsList = document.getElementById('accountsList');
+                accountsList.innerHTML = accounts.map(acc => `
+                    <div class="account-card">
+                        <h3>${acc.accountHolder}</h3>
+                        <div class="balance">${formatCurrency(acc.balance)}</div>
+                        <div class="number">Số TK: ${acc.accountNumber}</div>
+                    </div>
+                `).join('');
+                
+                const accountSelect = document.getElementById('accountSelect');
+                const currentValue = accountSelect.value;
+                accountSelect.innerHTML = '<option value="">-- Chọn tài khoản --</option>' +
+                    accounts.map(acc => `<option value="${acc.accountNumber}">${acc.accountNumber} - ${acc.accountHolder}</option>`).join('');
+                accountSelect.value = currentValue;
+            } catch (error) {
+                console.error('Error loading accounts:', error);
+            }
+        }
+
+        async function loadTransactions() {
+            try {
+                const response = await fetch(`${API_URL}/api/transactions`);
+                const transactions = await response.json();
+                
+                const transactionsList = document.getElementById('transactionsList');
+                transactionsList.innerHTML = transactions.map(tx => `
+                    <tr>
+                        <td>${tx.id}</td>
+                        <td>${tx.accountNumber}</td>
+                        <td>${tx.type}</td>
+                        <td>${formatCurrency(tx.amount)}</td>
+                        <td><span class="badge ${tx.status.toLowerCase()}">${tx.status}</span></td>
+                        <td>${formatDateTime(tx.createdAt)}</td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading transactions:', error);
+            }
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+            statusDiv.style.display = 'block';
+        }
+
+        document.getElementById('depositForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (isProcessing) return;
+            
+            const accountNumber = document.getElementById('accountSelect').value;
+            const amount = document.getElementById('amountInput').value;
+            
+            if (!accountNumber || !amount) {
+                showStatus('Vui lòng điền đầy đủ thông tin!', 'error');
+                return;
+            }
+            
+            isProcessing = true;
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Đang xử lý... (10s)';
+            
+            showStatus('⏳ Đang xử lý giao dịch... (10 giây)', 'processing');
+            
+            try {
+                const response = await fetch(`${API_URL}/api/deposit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ accountNumber, amount: parseFloat(amount) })
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    showStatus(`✅ Giao dịch thành công! ID: ${result.id}`, 'success');
+                    document.getElementById('depositForm').reset();
+                    loadAccounts();
+                    loadTransactions();
+                } else {
+                    const error = await response.text();
+                    showStatus(`❌ Lỗi: ${error}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`❌ Lỗi kết nối: ${error.message}`, 'error');
+            } finally {
+                isProcessing = false;
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Nộp tiền (10s)';
+            }
+        });
+
+        setInterval(() => {
+            if (!isProcessing) {
+                loadAccounts();
+                loadTransactions();
+            }
+        }, 5000);
+
+        loadAccounts();
+        loadTransactions();
+    </script>
+</body>
+</html>
