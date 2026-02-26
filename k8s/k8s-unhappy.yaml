@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: banking-good
+  name: banking-unhappy
 spec:
   replicas: 1
   strategy:
@@ -9,13 +9,13 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app: banking-good
+      app: banking-unhappy
   template:
     metadata:
       labels:
-        app: banking-good
+        app: banking-unhappy
     spec:
-      terminationGracePeriodSeconds: 60
+      terminationGracePeriodSeconds: 5
       containers:
       - name: banking
         image: chucthien03/banking-demo:blue-2
@@ -45,10 +45,10 @@ spec:
           initialDelaySeconds: 30
           periodSeconds: 10
 
-        lifecycle:
-            preStop:
-              exec:
-                command: ["sh", "-c", "sleep 20"]  # 
+        # lifecycle:
+        #     preStop:
+        #       exec:
+        #         command: ["sh", "-c", "sleep 20"]  # 
 
           # preStop:
           #   httpGet:
@@ -58,12 +58,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: banking-good
+  name: banking-unhappy
 spec:
   type: NodePort
   selector:
-    app: banking-good
+    app: banking-unhappy
   ports:
   - port: 8080
     targetPort: 8080
-    nodePort: 30081
+    nodePort: 30083

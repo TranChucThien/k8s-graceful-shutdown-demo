@@ -31,10 +31,17 @@ k8s-graceful-shutdown-demo/
 ├── k8s/                    # Kubernetes manifests
 │   ├── k8s-bad.yaml        # ❌ Immediate shutdown
 │   ├── k8s-good-blue.yaml  # ✅ Graceful shutdown (blue)
-│   └── k8s-good-green.yaml # ✅ Graceful shutdown (green)
+│   ├── k8s-good-green.yaml # ✅ Graceful shutdown (green)
+│   └── k8s-unhappy.yaml    # ⚠️ Test configuration
 ├── database/               # MySQL setup
 ├── scripts/                # Test scripts
-└── API-ENDPOINTS.md        # API documentation
+│   ├── 1-pod-info.sh       # Pod information
+│   ├── 2-test-concurrent-users.sh  # Concurrent traffic test
+│   ├── 3-test-deposit.sh   # Long-running transaction test
+│   ├── 4-test-availability.sh      # Availability test
+│   └── test-30-deposits.sh # 30 requests graceful shutdown test
+├── API-ENDPOINTS.md        # API documentation
+└── TEST-SCENARIO-30-REQUESTS.md    # Test scenario analysis
 ```
 
 ## 🚀 Quick Start
@@ -134,50 +141,95 @@ Chi tiết: [API-ENDPOINTS.md](API-ENDPOINTS.md)
 
 ## 🧪 Test Scenarios
 
-### Test 1: BAD Version (Mất Dữ Liệu)
+**Test Scripts:** Chi tiết đầy đủ tại [scripts/README.md](scripts/README.md)
+
+**Quick Overview:**
+- `2-test-concurrent-users.sh` - Test với nhiều users đồng thời (chạy liên tục)
+- `3-test-deposit.sh` - Test long-running transactions (chạy liên tục)
+- `4-test-availability.sh` - Monitor availability (chạy liên tục)
+- `test-30-deposits.sh` - Test graceful shutdown với 30 requests (chạy 1 lần)
+
+**Kịch bản chi tiết:** [TEST-SCENARIO-30-REQUESTS.md](TEST-SCENARIO-30-REQUESTS.md) - Phân tích timeline và kết quả test với 30 requests
+
+### Test 1: BAD Version (Mất Giao Dịch)
 
 ```bash
-# 1. Gửi request deposit
+# Đếm số transaction hiện tại
+curl -s http://localhost:30082/api/transactions | jq 'length'
+# Output: 69
+
+# Terminal 1: Tạo deposit (mất 10s để xử lý)
 curl -X POST http://localhost:30082/api/deposit \
   -H "Content-Type: application/json" \
-  -d '{"accountNumber":"ACC001","amount":100000}' &
+  -d '{"accountNumber": "ACC001", "amount": 50000}' &
 
-# 2. Ngay lập tức xóa pod
+# Terminal 2: Delete pod NGAY LẬP TỨC (trong vòng 10s)
 kubectl delete pod -l app=banking-bad --force --grace-period=0
 
-# 3. Kiểm tra kết quả
-curl http://localhost:30082/api/transactions | jq '.[0]'
+# Kiểm tra lại số transaction
+curl -s http://localhost:30082/api/transactions | jq 'length'
+# Output: 69 (không tăng - transaction bị mất!)
 ```
 
-**Kết quả:** ❌ Transaction status = "PROCESSING" (bị hủy)
+**Kết quả:** ❌ Transaction bị mất hoàn toàn, không được lưu vào database
 
 ---
 
-### Test 2: GOOD Version (Dữ Liệu An Toàn)
+### Test 2: GOOD Version (Giao Dịch An Toàn)
 
 ```bash
-# 1. Gửi request deposit
+# Đếm số transaction hiện tại
+curl -s http://localhost:30081/api/transactions | jq 'length'
+# Output: 69
+
+# Terminal 1: Tạo deposit (mất 10s để xử lý)
 curl -X POST http://localhost:30081/api/deposit \
   -H "Content-Type: application/json" \
-  -d '{"accountNumber":"ACC001","amount":100000}' &
+  -d '{"accountNumber": "ACC001", "amount": 50000}' &
 
-# 2. Ngay lập tức xóa pod
+# Terminal 2: Delete pod NGAY LẬP TỨC (trong vòng 10s)
 kubectl delete pod -l app=banking-good
 
-# 3. Chờ 10s và kiểm tra
-sleep 10
-curl http://localhost:30081/api/transactions | jq '.[0]'
+# Đợi pod terminate xong, kiểm tra lại
+curl -s http://localhost:30081/api/transactions | jq 'length'
+# Output: 70 (tăng lên - transaction được lưu!)
+
+# Xem transaction vừa tạo
+curl -s http://localhost:30081/api/transactions | jq '.[0]'
+# Output: {"id": 70, "status": "COMPLETED", "amount": 50000}
 ```
 
-**Kết quả:** ✅ Transaction status = "COMPLETED"
+**Kết quả:** ✅ Transaction hoàn thành và được lưu với status COMPLETED
+
+**Lưu ý:** Do `@Transactional`, transaction chỉ commit khi hoàn thành. Bạn sẽ không thấy trạng thái PROCESSING qua API - chỉ thấy COMPLETED (thành công) hoặc không thấy gì (bị mất).
 
 ---
 
-### Test 3: Rolling Update (Zero Downtime)
+### Test 3: Graceful Shutdown với 30 Requests
 
 ```bash
-# Terminal 1: Gửi request liên tục
-./scripts/test-concurrent-users.sh http://localhost:30081 10 0.5
+# Test tự động: gửi 30 requests, scale down sau request thứ 5
+cd scripts
+./test-30-deposits.sh http://localhost:30081 banking-good 5
+```
+
+**Kết quả với `sleep 20` preStop:**
+- ✅ 24-26/30 transactions thành công (80-87%)
+- ❌ 4-6/30 transactions thất bại
+- Requests 1-5: Thành công (trước scale down)
+- Requests 6-25/26: Thành công (trong grace period window)
+- Requests 26/27-30: Thất bại (sau khi SIGTERM)
+
+**Chi tiết phân tích:** [TEST-SCENARIO-30-REQUESTS.md](TEST-SCENARIO-30-REQUESTS.md)
+
+---
+
+### Test 4: Rolling Update (Zero Downtime)
+
+```bash
+# Terminal 1: Gửi traffic với nhiều users
+cd scripts
+./2-test-concurrent-users.sh http://localhost:30081 10 0.5
 
 # Terminal 2: Rolling update
 kubectl rollout restart deployment banking-good
@@ -185,26 +237,6 @@ kubectl get pods -w
 ```
 
 **Kết quả:** ✅ 100% success, không có downtime
-
----
-
-### Test 4: Verify Readiness State
-
-```bash
-# 1. Gửi request
-curl -X POST http://localhost:30081/api/deposit \
-  -H "Content-Type: application/json" \
-  -d '{"accountNumber":"ACC001","amount":100000}' &
-
-# 2. Delete pod
-kubectl delete pod -l app=banking-good
-
-# 3. Kiểm tra readiness (phải chuyển DOWN)
-POD_IP=$(kubectl get pod -l app=banking-good -o jsonpath='{.items[0].status.podIP}')
-curl http://$POD_IP:8080/actuator/health/readiness
-```
-
-**Kết quả:** ✅ Readiness = DOWN, Service ngừng route traffic
 
 ## 🔄 Luồng Graceful Shutdown
 
@@ -281,6 +313,8 @@ lifecycle:
 ## 📚 Tài Liệu Thêm
 
 - [API-ENDPOINTS.md](API-ENDPOINTS.md) - Chi tiết API endpoints
+- [scripts/README.md](scripts/README.md) - Hướng dẫn test scripts
+- [TEST-SCENARIO-30-REQUESTS.md](TEST-SCENARIO-30-REQUESTS.md) - Phân tích chi tiết test 30 requests
 - [SHUTDOWN-SCENARIOS.md](SHUTDOWN-SCENARIOS.md) - Các kịch bản shutdown
 - [DRAIN-CONTRACT-VERIFICATION.md](DRAIN-CONTRACT-VERIFICATION.md) - Verification tests
 

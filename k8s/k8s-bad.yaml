@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: banking
-        image: chucthien03/banking-demo:latest
+        image: chucthien03/banking-demo:blue-2
         ports:
         - containerPort: 8080
         env:
