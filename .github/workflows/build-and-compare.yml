@@ -9,7 +9,8 @@ on:
         type: string
 
 env:
-  IMAGE: chucthien03/banking-demo
+  APP_IMAGE: chucthien03/banking-demo
+  CACHE_IMAGE: chucthien03/banking-demo-cache
 
 jobs:
   build-and-compare:
@@ -23,24 +24,27 @@ jobs:
           docker buildx inspect --bootstrap
           echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
+      - name: Pull cache image
+        run: docker pull "$CACHE_IMAGE:latest" || true
+
       - name: Build and push with cache
         run: |
           docker buildx build \
             --push \
-            -t "$IMAGE:${{ inputs.tag }}" \
-            --cache-from type=registry,ref="$IMAGE:inline" \
-            --cache-to type=inline,mode=max \
+            -t "$APP_IMAGE:${{ inputs.tag }}" \
+            --cache-from type=registry,ref="$CACHE_IMAGE:latest" \
+            --cache-to type=registry,ref="$CACHE_IMAGE:latest",mode=max \
             ./app
 
       - name: Compare layers with previous image
         run: |
           PREV_TAG=$(( ${{ inputs.tag }} - 1 ))
 
-          docker pull "$IMAGE:${{ inputs.tag }}"
-          docker inspect "$IMAGE:${{ inputs.tag }}" | jq -r '.[0].RootFS.Layers[]' > /tmp/new_layers.txt
+          docker pull "$APP_IMAGE:${{ inputs.tag }}"
+          docker inspect "$APP_IMAGE:${{ inputs.tag }}" | jq -r '.[0].RootFS.Layers[]' > /tmp/new_layers.txt
 
-          if [ "$PREV_TAG" -ge 1 ] && docker pull "$IMAGE:$PREV_TAG" 2>/dev/null; then
-            docker inspect "$IMAGE:$PREV_TAG" | jq -r '.[0].RootFS.Layers[]' > /tmp/old_layers.txt
+          if [ "$PREV_TAG" -ge 1 ] && docker pull "$APP_IMAGE:$PREV_TAG" 2>/dev/null; then
+            docker inspect "$APP_IMAGE:$PREV_TAG" | jq -r '.[0].RootFS.Layers[]' > /tmp/old_layers.txt
           else
             echo "## 📊 Layer Comparison" >> "$GITHUB_STEP_SUMMARY"
             echo "ℹ️ First build (tag: ${{ inputs.tag }}), no previous image to compare." >> "$GITHUB_STEP_SUMMARY"
