@@ -20,12 +20,20 @@ jobs:
 
       - name: Setup Buildx & Login
         run: |
-          docker buildx create --name mybuilder --use
+          docker buildx create --name mybuilder --driver docker-container --use
           docker buildx inspect --bootstrap
           echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
-      - name: Pull cache image
-        run: docker pull "$CACHE_IMAGE:latest" || true
+      - name: Pull previous image (if exists)
+        id: prev
+        run: |
+          PREV_TAG=$(( ${{ inputs.tag }} - 1 ))
+          if [ "$PREV_TAG" -ge 1 ] && docker pull "$APP_IMAGE:$PREV_TAG" 2>/dev/null; then
+            echo "tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and push with cache
         run: |
@@ -37,28 +45,22 @@ jobs:
             ./app
 
       - name: Compare layers with previous image
+        if: steps.prev.outputs.exists == 'true'
         run: |
-          PREV_TAG=$(( ${{ inputs.tag }} - 1 ))
-
           docker pull "$APP_IMAGE:${{ inputs.tag }}"
-          docker inspect "$APP_IMAGE:${{ inputs.tag }}" | jq -r '.[0].RootFS.Layers[]' > /tmp/new_layers.txt
 
-          if [ "$PREV_TAG" -ge 1 ] && docker pull "$APP_IMAGE:$PREV_TAG" 2>/dev/null; then
-            docker inspect "$APP_IMAGE:$PREV_TAG" | jq -r '.[0].RootFS.Layers[]' > /tmp/old_layers.txt
-          else
-            echo "## 📊 Layer Comparison" >> "$GITHUB_STEP_SUMMARY"
-            echo "ℹ️ First build (tag: ${{ inputs.tag }}), no previous image to compare." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          echo "## 📊 Layer Comparison: v${PREV_TAG} → v${{ inputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "## 📊 Layer Comparison: v${{ steps.prev.outputs.tag }} → v${{ inputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          OLD_LAYERS=$(docker inspect "$APP_IMAGE:${{ steps.prev.outputs.tag }}" | jq -r '.[0].RootFS.Layers[]')
+          NEW_LAYERS=$(docker inspect "$APP_IMAGE:${{ inputs.tag }}" | jq -r '.[0].RootFS.Layers[]')
+
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           printf "%-6s %-25s %-25s %s\n" "Layer" "Old" "New" "Status" >> "$GITHUB_STEP_SUMMARY"
           printf "%-6s %-25s %-25s %s\n" "-----" "---" "---" "------" >> "$GITHUB_STEP_SUMMARY"
 
           IDX=0
-          paste /tmp/old_layers.txt /tmp/new_layers.txt | while IFS=$'\t' read -r old new; do
+          paste <(echo "$OLD_LAYERS") <(echo "$NEW_LAYERS") | while IFS=$'\t' read -r old new; do
             IDX=$((IDX + 1))
             old_short="${old:7:16}..."
             new_short="${new:7:16}..."
@@ -70,9 +72,15 @@ jobs:
           done
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-          TOTAL=$(wc -l < /tmp/new_layers.txt)
-          SAME=$(comm -12 <(sort /tmp/old_layers.txt) <(sort /tmp/new_layers.txt) | wc -l)
+          TOTAL=$(echo "$NEW_LAYERS" | wc -l)
+          SAME=$(comm -12 <(echo "$OLD_LAYERS" | sort) <(echo "$NEW_LAYERS" | sort) | wc -l)
           DIFF=$((TOTAL - SAME))
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "**Result:** $SAME/$TOTAL layers reused ($((SAME * 100 / TOTAL))% cache hit), $DIFF layer(s) changed" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: No previous image
+        if: steps.prev.outputs.exists != 'true'
+        run: |
+          echo "## 📊 Layer Comparison" >> "$GITHUB_STEP_SUMMARY"
+          echo "ℹ️ First build (tag: ${{ inputs.tag }}), no previous image to compare." >> "$GITHUB_STEP_SUMMARY"
