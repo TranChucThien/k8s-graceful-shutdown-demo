@@ -9,8 +9,7 @@ on:
         type: string
 
 env:
-  IMAGE: ${{ vars.DOCKER_IMAGE || 'chucthien03/banking-demo' }}
-  CACHE_TAG: cache
+  IMAGE: chucthien03/banking-demo
 
 jobs:
   build-and-compare:
@@ -18,76 +17,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Pull previous image (if exists)
-        id: prev
+      - name: Setup Buildx & Login
         run: |
-          PREV_TAG=$(( ${{ inputs.tag }} - 1 ))
-          if [ "$PREV_TAG" -ge 1 ] && docker pull "$IMAGE:$PREV_TAG" 2>/dev/null; then
-            echo "tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          docker buildx create --name mybuilder --use
+          docker buildx inspect --bootstrap
+          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
       - name: Build and push with cache
-        uses: docker/build-push-action@v5
-        with:
-          context: ./app
-          push: true
-          tags: ${{ env.IMAGE }}:${{ inputs.tag }}
-          cache-from: type=registry,ref=${{ env.IMAGE }}:${{ env.CACHE_TAG }}
-          cache-to: type=registry,ref=${{ env.IMAGE }}:${{ env.CACHE_TAG }},mode=max
+        run: |
+          docker buildx build \
+            --push \
+            -t "$IMAGE:${{ inputs.tag }}" \
+            --cache-from type=registry,ref="$IMAGE:inline" \
+            --cache-to type=inline,mode=max \
+            ./app
 
       - name: Compare layers with previous image
-        if: steps.prev.outputs.exists == 'true'
         run: |
+          PREV_TAG=$(( ${{ inputs.tag }} - 1 ))
+
           docker pull "$IMAGE:${{ inputs.tag }}"
+          docker inspect "$IMAGE:${{ inputs.tag }}" | jq -r '.[0].RootFS.Layers[]' > /tmp/new_layers.txt
 
-          echo "## 📊 Layer Comparison: v${{ steps.prev.outputs.tag }} → v${{ inputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PREV_TAG" -ge 1 ] && docker pull "$IMAGE:$PREV_TAG" 2>/dev/null; then
+            docker inspect "$IMAGE:$PREV_TAG" | jq -r '.[0].RootFS.Layers[]' > /tmp/old_layers.txt
+          else
+            echo "## 📊 Layer Comparison" >> "$GITHUB_STEP_SUMMARY"
+            echo "ℹ️ First build (tag: ${{ inputs.tag }}), no previous image to compare." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "## 📊 Layer Comparison: v${PREV_TAG} → v${{ inputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-
-          OLD_LAYERS=$(docker inspect "$IMAGE:${{ steps.prev.outputs.tag }}" | jq -r '.[0].RootFS.Layers[]')
-          NEW_LAYERS=$(docker inspect "$IMAGE:${{ inputs.tag }}" | jq -r '.[0].RootFS.Layers[]')
-
-          TOTAL=0
-          SAME=0
-          DIFF=0
-
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          printf "%-8s %-20s %-20s %s\n" "Layer" "Old (short)" "New (short)" "Status" >> "$GITHUB_STEP_SUMMARY"
-          printf "%-8s %-20s %-20s %s\n" "-----" "---------" "---------" "------" >> "$GITHUB_STEP_SUMMARY"
+          printf "%-6s %-25s %-25s %s\n" "Layer" "Old" "New" "Status" >> "$GITHUB_STEP_SUMMARY"
+          printf "%-6s %-25s %-25s %s\n" "-----" "---" "---" "------" >> "$GITHUB_STEP_SUMMARY"
 
-          paste <(echo "$OLD_LAYERS") <(echo "$NEW_LAYERS") | while IFS=$'\t' read -r old new; do
-            TOTAL=$((TOTAL + 1))
-            old_short="${old:7:12}..."
-            new_short="${new:7:12}..."
+          IDX=0
+          paste /tmp/old_layers.txt /tmp/new_layers.txt | while IFS=$'\t' read -r old new; do
+            IDX=$((IDX + 1))
+            old_short="${old:7:16}..."
+            new_short="${new:7:16}..."
             if [ "$old" = "$new" ]; then
-              printf "%-8s %-20s %-20s %s\n" "$TOTAL" "$old_short" "$new_short" "✔ SAME" >> "$GITHUB_STEP_SUMMARY"
+              printf "%-6s %-25s %-25s %s\n" "$IDX" "$old_short" "$new_short" "✔ SAME" >> "$GITHUB_STEP_SUMMARY"
             else
-              printf "%-8s %-20s %-20s %s\n" "$TOTAL" "$old_short" "$new_short" "❌ DIFF" >> "$GITHUB_STEP_SUMMARY"
+              printf "%-6s %-25s %-25s %s\n" "$IDX" "$old_short" "$new_short" "❌ DIFF" >> "$GITHUB_STEP_SUMMARY"
             fi
           done
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-          # Summary stats
-          TOTAL=$(echo "$NEW_LAYERS" | wc -l)
-          SAME=$(comm -12 <(echo "$OLD_LAYERS" | sort) <(echo "$NEW_LAYERS" | sort) | wc -l)
+          TOTAL=$(wc -l < /tmp/new_layers.txt)
+          SAME=$(comm -12 <(sort /tmp/old_layers.txt) <(sort /tmp/new_layers.txt) | wc -l)
           DIFF=$((TOTAL - SAME))
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "**Result:** $SAME/$TOTAL layers reused ($((SAME * 100 / TOTAL))% cache hit), $DIFF layer(s) changed" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: No previous image
-        if: steps.prev.outputs.exists != 'true'
-        run: |
-          echo "## 📊 Layer Comparison" >> "$GITHUB_STEP_SUMMARY"
-          echo "ℹ️ First build (tag: ${{ inputs.tag }}), no previous image to compare." >> "$GITHUB_STEP_SUMMARY"
